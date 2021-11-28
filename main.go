@@ -1,12 +1,21 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/golang/glog"
-	"log"
+	"github.com/spf13/viper"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+var (
+	localCfg = viper.New()
 )
 
 func getReqIp(r *http.Request) string {
@@ -33,7 +42,7 @@ func envCheckMiddleware(next http.Handler) http.Handler {
 		return w
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Executing middleware of checking environment variables...")
+		glog.Info("Executing middleware of checking environment variables...")
 		next.ServeHTTP(checkSysEnv(w), r)
 	})
 }
@@ -47,7 +56,7 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := json.Marshal(map[string]string{})
 	if err != nil {
-		log.Println(err)
+		glog.Error(err)
 		statusCode = http.StatusInternalServerError
 	}
 	w.WriteHeader(statusCode)
@@ -60,7 +69,7 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Type", "application/json")
 	resp, err := json.Marshal(map[string]string{})
 	if err != nil {
-		log.Println(err)
+		glog.Error(err)
 		statusCode = http.StatusInternalServerError
 	}
 	w.WriteHeader(statusCode)
@@ -68,11 +77,48 @@ func healthzHandler(w http.ResponseWriter, r *http.Request) {
 	printAccessLog(r, statusCode)
 }
 
-func main() {
-	glog.V(2).Info("Starting http server...")
-	http.Handle("/", envCheckMiddleware(http.HandlerFunc(rootHandler)))
-	http.HandleFunc("/healthz", healthzHandler)
-	if err := http.ListenAndServe(":80", nil); err != nil {
-		log.Fatal(err)
+func loadConfigFile() {
+	glog.Info("Loading configuration...")
+	localCfg.SetConfigFile("config.yaml")
+	localCfg.AddConfigPath("./conf/")
+	localCfg.SetConfigName("config")
+	localCfg.SetConfigType("yaml")
+	if err := localCfg.ReadInConfig(); err != nil {
+		glog.Fatalf("Failed to load initial configuration to run..., error: %v", err)
 	}
+}
+
+func main() {
+	flag.Parse()
+	defer glog.Flush()
+	loadConfigFile()
+	glog.Info("Starting http server...")
+
+	mux := http.NewServeMux()
+	mux.Handle("/", envCheckMiddleware(http.HandlerFunc(rootHandler)))
+	mux.HandleFunc("/healthz", healthzHandler)
+	srv := http.Server{
+		Addr:    fmt.Sprint(":", localCfg.GetInt("portNum")),
+		Handler: mux,
+	}
+	processed := make(chan struct{})
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
+		<-c
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); nil != err {
+			glog.Fatalf("Server shutdown failed, error: %v\n", err)
+		}
+		glog.Info("Server gracefully shutdown")
+
+		close(processed)
+	}()
+	if err := srv.ListenAndServe(); http.ErrServerClosed != err {
+		glog.Fatalf("Server not gracefully shutdown, err :%v\n", err)
+	}
+
+	<-processed
 }

@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-httpserver
+  namespace: default
+  labels:
+    app: my-httpserver
+spec:
+  selector:
+    matchLabels:
+      app: my-httpserver
+  replicas: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: my-httpserver
+    spec:
+      containers:
+        - name: my-httpserver
+          image: andywuwu/httpserver:latest
+          resources:
+            requests:
+              cpu: 100m
+              memory: 100Mi
+            limits:
+              cpu: 300m
+              memory: 300Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 5
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 3
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 80
+            initialDelaySeconds: 10
+            timeoutSeconds: 2
+            successThreshold: 1
+            failureThreshold: 10
+            periodSeconds: 10
+          env:
+            - name: DB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: my-httpserver
+                  key: DB_HOST
+          ports:
+            - containerPort: 80
+              name: http
+          volumeMounts:
+            - name: localtime
+              mountPath: /etc/localtime
+            - name: config
+              mountPath: /conf/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: localtime
+          hostPath:
+            path: /usr/share/zoneinfo/Asia/Shanghai
+        - name: config
+          configMap:
+            defaultMode: 420
+            name: my-httpserver-config
+      restartPolicy: Always

@@ -18,4 +18,4 @@ FROM alpine:3.14
 EXPOSE 80
 COPY --from=build_go /go/src/app/bin/linux/httpServer /bin/httpServer
 WORKDIR /bin
-ENTRYPOINT ["./httpServer"]
+ENTRYPOINT ["./httpServer", "-alsologtostderr"]
